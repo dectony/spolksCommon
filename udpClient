@@ -1,0 +1,86 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <winsock2.h>
+#include <iostream>
+#include <string>
+#include <WinBase.h>
+using namespace std;
+#pragma comment(lib, "Ws2_32.lib")
+
+
+int main(int argc, char** argv)
+{
+	if (argc < 4) 
+	{
+		printf("missing some arguments\n");
+		return 1;
+	}
+	printf("type command to server...\n");
+	//----------------------
+    // The sockaddr_in structure specifies the address family,
+    // IP address, and port for the socket that is being bound.
+    sockaddr_in service;
+    service.sin_family = AF_INET;
+    service.sin_addr.s_addr = inet_addr(argv[1]);
+
+    service.sin_port = htons(atoi(argv[2]));
+
+    //----------------------
+    // Initialize Winsock.
+    WSADATA wsaData;
+    int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    if (iResult != NO_ERROR) {
+        printf("WSAStartup failed with error: %ld\n", iResult);
+        return 1;
+    }
+
+    //----------------------
+    // Create a SOCKET for listening for
+    // incoming connection requests.
+    SOCKET sd_udp;
+	sd_udp = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sd_udp == INVALID_SOCKET) 
+	{
+        printf("udp socket failed with error: %ld\n", WSAGetLastError());
+        WSACleanup();
+        return 1;
+    }
+
+	string input;
+	while(getline(cin, input))
+	{
+		if(0 == strncmp(input.c_str(), "SEND ", 5) && input.length() > 5)
+		{
+			STARTUPINFOA si;
+			memset(&si, 0 , sizeof(si));
+			PROCESS_INFORMATION pi;
+			memset(&pi, 0, sizeof(pi));
+
+			string cl = "lab_clnt_tcp.exe ";
+			cl += argv[1];
+			cl += " ";
+			cl += argv[3];
+			cl += " ";
+			cl += &input[5];
+
+			if (::CreateProcessA(NULL, &cl.front(), NULL, NULL, FALSE, NULL, NULL, NULL, &si, &pi))
+			{
+				::CloseHandle(pi.hProcess);
+				printf("File was successfully sent via TCP client\n");
+			}else
+				printf("Error sending file via TCP client\n");
+			continue;
+		}
+
+		int sent = sendto(sd_udp, input.c_str(), input.length(), 0, (SOCKADDR *) & service, sizeof (service));
+		if(sent != input.length())
+		{
+			printf("error sending command %d\n", WSAGetLastError());
+			break;
+		}
+	}
+
+	closesocket(sd_udp);
+    WSACleanup();
+    return 0;
+}
