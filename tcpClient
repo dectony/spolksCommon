@@ -1,0 +1,70 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <winsock2.h>
+
+#pragma comment(lib, "Ws2_32.lib")
+
+
+int main(int argc, char** argv)
+{
+	if (argc < 4) 
+	{
+		printf("missing some arguments\n");
+		return 1;
+	}
+	//----------------------
+    // The sockaddr_in structure specifies the address family,
+    // IP address, and port for the socket that is being bound.
+    sockaddr_in service;
+    service.sin_family = AF_INET;
+    service.sin_addr.s_addr = inet_addr(argv[1]);
+
+    service.sin_port = htons(atoi(argv[2]));
+
+    //----------------------
+    // Initialize Winsock.
+    WSADATA wsaData;
+    int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    if (iResult != NO_ERROR) {
+        printf("WSAStartup failed with error: %ld\n", iResult);
+        return 1;
+    }
+
+    //----------------------
+    // Create a SOCKET for listening for
+    // incoming connection requests.
+    SOCKET sd_tcp;
+    sd_tcp = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sd_tcp == INVALID_SOCKET) 
+	{
+        printf("tcp socket failed with error: %ld\n", WSAGetLastError());
+        WSACleanup();
+        return 1;
+    }
+
+	if(connect(sd_tcp, (sockaddr*)&service, sizeof(service))){
+		printf("unable to establish connection to server. error %d\n", WSAGetLastError());
+	}
+	
+	FILE* f = fopen(argv[3], "rb");
+	if(f){
+		char buf[1024];
+		while(!feof(f))
+		{
+			int read = fread(buf, 1, _countof(buf), f);
+			if(read)
+			{
+				int sent = send(sd_tcp, buf, read, 0);
+				if(sent!= read){
+					printf("unable to send data buffer over the network!\n");
+					break;
+				}
+			}
+		}		
+		fclose(f);
+	}
+	printf("OLA! File was successfully sent\n");
+	closesocket(sd_tcp);
+    WSACleanup();
+    return 0;
+}
