@@ -1,0 +1,219 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <winsock2.h>
+
+#pragma comment(lib, "Ws2_32.lib")
+
+char ofile[MAX_PATH];
+size_t fpos = 0;
+bool bAppendOn = false;
+
+int TCP_Proc(SOCKET rsd)
+{
+	char buf[1024] = {0};
+	int cnt = recv(rsd, buf, _countof(buf), 0);
+	if (!cnt)
+	{
+		return -1;
+	}
+	FILE* f = fopen(ofile, "ab+");
+	if(f){
+		int written = fwrite(buf, 1, cnt, f);
+		if (written != cnt) 
+			printf("error writing to file. attempted %d written %d\n", cnt, written);
+		else
+			printf("%d bytes were successfully written to %s\n", cnt, ofile);
+		fclose(f);
+	}
+	else
+	{
+		printf("error opening file!\n");
+		return -1;
+	}
+	return 1;
+}
+
+int UDP_Proc(SOCKET RecvSocket)
+{
+	sockaddr_in SenderAddr;
+    int SenderAddrSize = sizeof (SenderAddr);
+	char RecvBuf[1024];
+    int BufLen = 1024;
+	int iResult = recvfrom(RecvSocket,
+                       RecvBuf, BufLen, 0, (SOCKADDR *) & SenderAddr, &SenderAddrSize);
+    if (iResult == SOCKET_ERROR) {
+        printf("recvfrom failed with error %d\n", WSAGetLastError());		
+		return -1;
+    }
+
+	RecvBuf[iResult] = 0;
+	printf("UDP command received: [%s]\n", RecvBuf);
+
+	if(0 == strcmp(RecvBuf, "APPENDOFF")) {
+		printf("Append mode is OFF. \n");
+		bAppendOn = false;
+		return 0;
+	}
+
+	if(0 == strcmp(RecvBuf, "STOP")){
+		printf("STOP command received\n");
+		return -1;
+	}
+
+	if(0 == strncmp(RecvBuf, "FILE ", 4) && strlen(RecvBuf) > 5) {
+		sprintf(ofile, "%s", &RecvBuf[5]);
+		printf("FILE command received. New filename = %s\n", ofile);
+		return 0;
+	}
+
+	if(0 == strcmp(RecvBuf, "APPENDON")) {
+		printf("Append mode is ON. \n");
+		bAppendOn = true;
+		return 0;
+	}
+}
+
+int main(int argc, char** argv)
+{
+	if (argc < 2) 
+	{
+		printf("missing some arguments\n");
+		return 1;
+	}
+	strcpy(ofile, "default.dat");
+    //----------------------
+    // Initialize Winsock.
+    WSADATA wsaData;
+    int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    if (iResult != NO_ERROR) {
+        printf("WSAStartup failed with error: %ld\n", iResult);
+        return 1;
+    }
+    //----------------------
+    // Create a SOCKET for listening for
+    // incoming connection requests.
+    SOCKET sd_tcp, sd_udp;
+    sd_tcp = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sd_tcp == INVALID_SOCKET) 
+	{
+        printf("tcp socket failed with error: %ld\n", WSAGetLastError());
+        WSACleanup();
+        return 1;
+    }
+
+	sd_udp = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (sd_udp == INVALID_SOCKET) 
+	{
+        printf("udp socket failed with error: %ld\n", WSAGetLastError());
+        WSACleanup();
+        return 1;    
+	}
+
+    //----------------------
+    // The sockaddr_in structure specifies the address family,
+    // IP address, and port for the socket that is being bound.
+    sockaddr_in service;
+    service.sin_family = AF_INET;
+    service.sin_addr.s_addr = inet_addr(argv[1]);
+    service.sin_port = htons(27015);
+
+    if (bind(sd_tcp, (SOCKADDR *) & service, sizeof (service)) == SOCKET_ERROR) 
+	{
+        printf("tcp bind failed with error: %ld\n", WSAGetLastError());
+        closesocket(sd_tcp);
+        WSACleanup();
+        return 1;
+    }
+
+	// Bind the socket to any address and the specified port.
+	sockaddr_in RecvAddr;
+    RecvAddr.sin_family = AF_INET;
+    RecvAddr.sin_port = htons(27016);
+    //RecvAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+	RecvAddr.sin_addr.s_addr = inet_addr(argv[1]);
+
+	iResult = bind(sd_udp, (SOCKADDR *) & RecvAddr, sizeof (RecvAddr));
+    if (iResult != 0) 
+	{
+        printf("udp bind failed with error %d\n", WSAGetLastError());
+        return 1;
+    }
+    //----------------------
+    // Listen for incoming connection requests.
+    // on the created socket
+    if (listen(sd_tcp, 1) == SOCKET_ERROR) 
+	{
+        printf("listen failed with error: %ld\n", WSAGetLastError());
+        closesocket(sd_tcp);
+        WSACleanup();
+        return 1;
+    }
+    //----------------------
+    // Create a SOCKET for accepting incoming requests.
+    printf("Waiting for client to connect...\n");
+
+	 fd_set rfds, afds; 
+	 int nfds; 
+	 int rlen;
+	 SOCKET rsd;
+	 sockaddr remote;
+	 nfds = max(sd_tcp, sd_udp) + 1; 
+	 FD_ZERO( &afds); 
+	 FD_SET( sd_tcp, &afds);
+	 FD_SET( sd_udp, &afds);
+	 bool bRun = true;
+	 while(bRun) 
+	 {
+		 memcpy( &rfds, &afds, sizeof(rfds)); 
+
+			 if (select( nfds, &rfds, 0, 0, 0) < 0) 
+			 return 2; 
+		 
+		 if( FD_ISSET( sd_tcp, &rfds)) 
+		 { 
+			 rlen = sizeof(remote);
+			 rsd = accept( sd_tcp, &remote, &rlen); 
+			 printf("accepted connection from %d\n", remote.sa_data);
+			 FD_SET( rsd, &afds); 
+			 if(rsd >= nfds) 
+				 nfds = rsd+1;
+		 } 
+
+		 if( FD_ISSET( sd_udp, &rfds)) 
+		 { 
+			int result = UDP_Proc(sd_udp);
+
+			switch(result)
+			{
+			case -1:
+				bRun = false;
+				break;
+			default: break;
+			}
+		 } 
+
+		 for( rsd=0; rsd < nfds && bRun; ++rsd) 
+		 {			
+			 if( (rsd != sd_tcp) && (rsd != sd_udp) && FD_ISSET( rsd, &rfds)) 
+			 { 
+				 if(TCP_Proc(rsd) < 0)
+				 {
+					closesocket( rsd); 
+					FD_CLR( rsd, &afds); 
+				 }
+			 }
+		 }
+	 }
+
+	 for(rsd = 0; rsd < nfds; ++rsd)
+	 {
+		 if(FD_ISSET(rsd, &afds))
+		 {
+			 	closesocket( rsd); 
+				FD_CLR( rsd, &afds); 
+		 }
+	 }
+
+    WSACleanup();
+    return 0;
+}
